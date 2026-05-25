@@ -1,0 +1,17 @@
+{
+  "name": "local-community-backend",
+  "version": "1.0.0",
+  "description": "感謝ポイントシステム バックエンドAPI（LINE Bot + ブロックチェーン連携）",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "@line/bot-sdk": "^9.4.0",
+    "ethers": "^6.12.1",
+    "dotenv": "^16.4.5",
+    "axios": "^1.7.2"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "local-community-kansha",
+  "version": "1.0.0",
+  "description": "地域コミュニティ向け感謝ポイントシステム（ブロックチェーン基盤）",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:local": "hardhat run scripts/deploy.js --network hardhat",
+    "deploy:testnet": "hardhat run scripts/deploy.js --network polygonAmoy",
+    "deploy:mainnet": "hardhat run scripts/deploy.js --network polygon",
+    "node": "hardhat node"
+  },
+  "devDependencies": {
+    "hardhat": "^2.22.0",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.4.5"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.2"
+  }
+}
