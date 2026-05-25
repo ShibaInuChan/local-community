@@ -1,0 +1,8 @@
+node_modules/
+.env
+cache/
+artifacts/
+typechain-types/
+
+# ユーザーウォレットマッピング（本番ではDBに移行する）
+backend/userWallets.json
