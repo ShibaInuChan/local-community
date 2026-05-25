@@ -37,9 +37,10 @@ app.get("/health", (req, res) => {
 
 // LINE Webhookエンドポイント
 // LINE認証情報が設定されている場合は署名検証あり、モックモードでは検証なし
+// line.middleware は内部でボディを読むため、express.json() と併用しない
 const webhookMiddleware = isLineMockMode
   ? express.json()
-  : [express.json(), line.middleware(lineConfig)];
+  : line.middleware(lineConfig);
 
 app.post("/webhook", webhookMiddleware, async (req, res) => {
   const events = req.body.events || [];
