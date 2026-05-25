@@ -1,7 +1,7 @@
 // index.js
 // LINE BotバックエンドのエントリーポイントとなるExpressサーバー
 
-require("dotenv").config({ path: require("path").join(__dirname, "../.env") });
+require("dotenv").config();
 
 const express = require("express");
 const line = require("@line/bot-sdk");
