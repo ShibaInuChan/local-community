@@ -16,7 +16,13 @@ const lineConfig = {
   channelSecret: process.env.LINE_CHANNEL_SECRET || "",
 };
 
-const lineClient = new line.messagingApi.MessagingApiClient({
+// LINE認証情報が未設定の場合はモックモードで動作
+const isLineMockMode = !lineConfig.channelSecret;
+if (isLineMockMode) {
+  console.log("[index] LINE認証情報が未設定のため、LINEモックモードで動作します");
+}
+
+const lineClient = isLineMockMode ? null : new line.messagingApi.MessagingApiClient({
   channelAccessToken: lineConfig.channelAccessToken,
 });
 
@@ -30,37 +36,38 @@ app.get("/health", (req, res) => {
 });
 
 // LINE Webhookエンドポイント
-// line.middleware でLINEからのリクエストを検証してから処理する
-app.post(
-  "/webhook",
-  line.middleware(lineConfig),
-  async (req, res) => {
-    // LINEは複数のイベントをまとめて送ってくることがある
-    const events = req.body.events;
+// LINE認証情報が設定されている場合は署名検証あり、モックモードでは検証なし
+const webhookMiddleware = isLineMockMode
+  ? express.json()
+  : [express.json(), line.middleware(lineConfig)];
 
-    // すべてのイベントを並行処理する
-    await Promise.all(
-      events.map(async (event) => {
-        try {
-          const replyText = await handleMessage(event);
+app.post("/webhook", webhookMiddleware, async (req, res) => {
+  const events = req.body.events || [];
 
-          // 返信テキストがある場合のみLINEに送信
-          if (replyText && event.replyToken) {
-            await lineClient.replyMessage({
-              replyToken: event.replyToken,
-              messages: [{ type: "text", text: replyText }],
-            });
+  await Promise.all(
+    events.map(async (event) => {
+      try {
+        const replyText = await handleMessage(event);
+
+        if (isLineMockMode) {
+          // モックモード: コンソールに応答を出力するだけ
+          if (replyText) {
+            console.log("[LINE応答]\n" + replyText);
           }
-        } catch (err) {
-          console.error("[index] イベント処理エラー:", err.message);
+        } else if (replyText && event.replyToken) {
+          await lineClient.replyMessage({
+            replyToken: event.replyToken,
+            messages: [{ type: "text", text: replyText }],
+          });
         }
-      })
-    );
+      } catch (err) {
+        console.error("[index] イベント処理エラー:", err.message);
+      }
+    })
+  );
 
-    // LINEサーバーには必ず200を返す（返さないと再送が繰り返される）
-    res.status(200).json({ status: "ok" });
-  }
-);
+  res.status(200).json({ status: "ok" });
+});
 
 // LINE middlewareのエラーハンドリング（署名検証失敗など）
 app.use((err, req, res, next) => {
