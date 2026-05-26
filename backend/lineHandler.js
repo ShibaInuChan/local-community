@@ -6,43 +6,36 @@ const fs = require("fs");
 const path = require("path");
 const contractService = require("./contractService");
 
-// ユーザーID → ウォレットアドレスのマッピングファイル
 const WALLETS_FILE = path.join(__dirname, "userWallets.json");
+const NAMES_FILE = path.join(__dirname, "userNames.json");
 
-/**
- * ウォレットマッピングを読み込む
- * ファイルが存在しない場合は空のオブジェクトを返す
- */
+// ── ファイル操作ヘルパー ────────────────────────────────────
+
 function loadWallets() {
-  if (!fs.existsSync(WALLETS_FILE)) {
-    return {};
-  }
-  try {
-    return JSON.parse(fs.readFileSync(WALLETS_FILE, "utf8"));
-  } catch {
-    return {};
-  }
+  if (!fs.existsSync(WALLETS_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(WALLETS_FILE, "utf8")); } catch { return {}; }
 }
 
-/**
- * ウォレットマッピングを保存する
- */
 function saveWallets(wallets) {
   fs.writeFileSync(WALLETS_FILE, JSON.stringify(wallets, null, 2), "utf8");
 }
 
-/**
- * LINEユーザーIDに対応するウォレットアドレスを取得する
- * 存在しない場合は新しいウォレットを自動生成して返す
- */
+// 名前 → LINE IDのマッピング（メンバーが「登録 田中」で登録する）
+function loadNames() {
+  if (!fs.existsSync(NAMES_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(NAMES_FILE, "utf8")); } catch { return {}; }
+}
+
+function saveNames(names) {
+  fs.writeFileSync(NAMES_FILE, JSON.stringify(names, null, 2), "utf8");
+}
+
+// ── ウォレット管理 ──────────────────────────────────────────
+
 function getOrCreateWallet(lineUserId) {
   const wallets = loadWallets();
+  if (wallets[lineUserId]) return wallets[lineUserId];
 
-  if (wallets[lineUserId]) {
-    return wallets[lineUserId];
-  }
-
-  // 新しいウォレットをランダム生成
   const newWallet = ethers.Wallet.createRandom();
   wallets[lineUserId] = newWallet.address;
   saveWallets(wallets);
@@ -51,37 +44,48 @@ function getOrCreateWallet(lineUserId) {
   return newWallet.address;
 }
 
-/**
- * 管理者かどうかを判定する
- */
+// ── ユーティリティ ──────────────────────────────────────────
+
 function isAdmin(lineUserId) {
   return lineUserId === process.env.ADMIN_LINE_USER_ID;
 }
 
-/**
- * ランクに対応する絵文字を返す
- */
 function tierEmoji(tier) {
   const map = { Bronze: "🥉", Silver: "🥈", Gold: "🥇", Platinum: "💎" };
   return map[tier] || "🏅";
 }
 
-/**
- * メインのメッセージハンドラ
- * @param {object} event - LINE Webhookのeventオブジェクト
- * @returns {string} LINEへ返信するテキスト
- */
+// 名前からウォレットアドレスを引く
+// 「田中」「田中さん」「田中　さん」など表記揺れを吸収する
+function resolveNameToAddress(inputName) {
+  const names = loadNames();
+  const wallets = loadWallets();
+
+  // 「さん」「くん」「ちゃん」等の敬称を除去して正規化
+  const normalize = (s) => s.replace(/[\s　]*(さん|くん|ちゃん|様|氏)$/, "").trim();
+  const normalizedInput = normalize(inputName);
+
+  // 完全一致 → 前方一致の順で検索
+  const found =
+    Object.entries(names).find(([name]) => normalize(name) === normalizedInput) ||
+    Object.entries(names).find(([name]) => normalize(name).startsWith(normalizedInput));
+
+  if (!found) return null;
+
+  const [, lineUserId] = found;
+  return wallets[lineUserId] || null;
+}
+
+// ── メインハンドラ ──────────────────────────────────────────
+
 async function handleMessage(event) {
-  // テキストメッセージ以外は無視
-  if (event.type !== "message" || event.message.type !== "text") {
-    return null;
-  }
+  if (event.type !== "message" || event.message.type !== "text") return null;
 
   const text = event.message.text.trim();
   const lineUserId = event.source.userId;
   const userAddress = getOrCreateWallet(lineUserId);
 
-  // ─── 残高確認 ───────────────────────────────────────────
+  // ─── 残高確認 ─────────────────────────────────────────────
   if (text === "残高確認" || text.toLowerCase() === "balance") {
     const balance = await contractService.getBalance(userAddress);
     const tier = await contractService.getTier(userAddress);
@@ -97,7 +101,7 @@ async function handleMessage(event) {
     ].join("\n");
   }
 
-  // ─── ステータス詳細 ──────────────────────────────────────
+  // ─── ステータス詳細 ────────────────────────────────────────
   if (text === "ステータス") {
     const balance = await contractService.getBalance(userAddress);
     const tier = await contractService.getTier(userAddress);
@@ -121,10 +125,20 @@ async function handleMessage(event) {
     ].join("\n");
   }
 
-  // ─── 使い方・ヘルプ ─────────────────────────────────────
+  // ─── 使い方・ヘルプ ───────────────────────────────────────
   if (text === "使い方" || text.toLowerCase() === "help") {
     const adminHelp = isAdmin(lineUserId)
-      ? `\n【管理者コマンド】\nありがとう [お名前] [活動内容]\n  例: ありがとう 田中さん 公民館の清掃`
+      ? [
+          ``,
+          `【管理者コマンド】`,
+          `ありがとう [お名前] [活動内容]`,
+          `  例: ありがとう 田中さん 公民館の清掃`,
+          ``,
+          `減価設定 [周期日数] [減価率%] [通知日数]`,
+          `  例: 減価設定 30 10 3`,
+          ``,
+          `減価確認  → 現在の減価設定を表示`,
+        ].join("\n")
       : "";
 
     return [
@@ -134,18 +148,44 @@ async function handleMessage(event) {
       `残高確認  → 現在のポイントとランクを表示`,
       `ステータス → ランク特典の一覧を表示`,
       `使い方    → このヘルプを表示`,
+      `登録 [お名前] → 自分の名前を登録する`,
+      `  例: 登録 田中`,
       adminHelp,
     ].join("\n");
   }
 
-  // ─── ポイント付与（管理者専用） ──────────────────────────
+  // ─── 名前登録 ─────────────────────────────────────────────
+  // 書式: 登録 [お名前]
+  if (text.startsWith("登録 ") || text.startsWith("登録　")) {
+    const name = text.replace(/^登録[\s　]+/, "").trim();
+    if (!name) {
+      return "名前を入力してください。\n例: 登録 田中";
+    }
+
+    const names = loadNames();
+
+    // 同じ名前が別ユーザーに登録済みでないか確認
+    const duplicate = Object.entries(names).find(
+      ([n, id]) => n === name && id !== lineUserId
+    );
+    if (duplicate) {
+      return `⚠️ 「${name}」はすでに別のメンバーが登録しています。\n別のお名前で登録してください。`;
+    }
+
+    names[name] = lineUserId;
+    saveNames(names);
+
+    console.log(`[lineHandler] 名前登録: ${name} → ${lineUserId}`);
+    return `✅ 「${name}」として登録しました！\n管理者がポイントを付与する際に使われます。`;
+  }
+
+  // ─── ポイント付与（管理者専用） ───────────────────────────
   // 書式: ありがとう [対象者名] [活動内容]
   if (text.startsWith("ありがとう ")) {
     if (!isAdmin(lineUserId)) {
       return "⚠️ ポイントの付与は管理者のみ行えます";
     }
 
-    // "ありがとう 田中さん 公民館の清掃" → ["田中さん", "公民館の清掃"]
     const parts = text.replace("ありがとう ", "").split(" ");
     if (parts.length < 2) {
       return "書式が正しくありません。\n例: ありがとう 田中さん 公民館の清掃";
@@ -154,18 +194,12 @@ async function handleMessage(event) {
     const targetName = parts[0];
     const reason = parts.slice(1).join(" ");
 
-    // 対象者名からウォレットアドレスを逆引き（名前は未実装なので簡易版）
-    // ここでは管理者自身のアドレスをテスト対象にする（本番では名前→IDの管理が必要）
-    const wallets = loadWallets();
-    const targetEntry = Object.entries(wallets).find(([, addr]) => addr);
-
-    if (!targetEntry) {
-      return `${targetName} さんはまだシステムに登録されていません`;
+    const targetAddress = resolveNameToAddress(targetName);
+    if (!targetAddress) {
+      return `⚠️ 「${targetName}」さんはまだ登録されていません。\nメンバー本人に「登録 ${targetName.replace(/さん|くん|ちゃん|様/, "")}」と送るよう伝えてください。`;
     }
 
-    const targetAddress = targetEntry[1];
     const result = await contractService.issuePoints(targetAddress, 10, reason);
-
     if (result.success) {
       const newBalance = await contractService.getBalance(targetAddress);
       return [
@@ -181,7 +215,54 @@ async function handleMessage(event) {
     }
   }
 
-  // ─── 未認識コマンド ──────────────────────────────────────
+  // ─── 減価設定（管理者専用） ───────────────────────────────
+  // 書式: 減価設定 [周期日数] [減価率%] [通知日数]
+  if (text.startsWith("減価設定 ")) {
+    if (!isAdmin(lineUserId)) {
+      return "⚠️ 減価設定は管理者のみ変更できます";
+    }
+
+    const parts = text.replace("減価設定 ", "").split(" ");
+    if (parts.length < 3) {
+      return "書式が正しくありません。\n例: 減価設定 30 10 3\n（周期30日、減価率10%、3日前に通知）";
+    }
+
+    const [period, rate, notifyDays] = parts.map(Number);
+    if ([period, rate, notifyDays].some(isNaN) || rate < 0 || rate > 100) {
+      return "⚠️ 数値が正しくありません。\n減価率は0〜100の範囲で入力してください。";
+    }
+
+    const result = await contractService.setDecayConfig(period, rate, notifyDays);
+    if (result.success) {
+      return [
+        `✅ 減価設定を更新しました`,
+        ``,
+        `減価周期: ${period} 日`,
+        `減価率:   ${rate} %`,
+        `通知タイミング: ${notifyDays} 日前`,
+      ].join("\n");
+    } else {
+      return `❌ 設定の更新に失敗しました\n${result.error || ""}`;
+    }
+  }
+
+  // ─── 減価確認（管理者専用） ───────────────────────────────
+  if (text === "減価確認") {
+    if (!isAdmin(lineUserId)) {
+      return "⚠️ 減価設定の確認は管理者のみ行えます";
+    }
+
+    const config = await contractService.getDecayConfig();
+    return [
+      `⚙️ 現在の減価設定`,
+      ``,
+      `減価周期: ${config.decayPeriod} 日`,
+      `減価率:   ${config.decayRate} %`,
+      `通知タイミング: ${config.decayNotifyDays} 日前`,
+    ].join("\n");
+  }
+
+  // ─── 未認識コマンド ───────────────────────────────────────
   return `「使い方」と送るとコマンド一覧が表示されます`;
 }
 

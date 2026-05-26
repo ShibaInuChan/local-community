@@ -4,5 +4,6 @@ cache/
 artifacts/
 typechain-types/
 
-# ユーザーウォレットマッピング（本番ではDBに移行する）
+# ユーザーデータ（本番ではDBに移行する）
 backend/userWallets.json
+backend/userNames.json

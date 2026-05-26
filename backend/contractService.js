@@ -7,14 +7,17 @@ const { ethers } = require("ethers");
 // KanshaPointコントラクトのABI（必要な関数だけ定義）
 // ABIとは: コントラクトの関数定義情報。これがないと関数を呼び出せない。
 const CONTRACT_ABI = [
-  // ポイント発行（オーナー専用）
   "function issuePoints(address recipient, uint256 amount, string memory reason) external",
-  // 残高確認
   "function getBalance(address user) external view returns (uint256)",
-  // ランク確認
   "function getTier(address user) external view returns (string memory)",
-  // イベント定義
+  "function burnDecay(address user, uint256 amount) external",
+  "function setDecayConfig(uint256 _decayPeriod, uint256 _decayRate, uint256 _decayNotifyDays) external",
+  "function decayPeriod() external view returns (uint256)",
+  "function decayRate() external view returns (uint256)",
+  "function decayNotifyDays() external view returns (uint256)",
   "event PointsIssued(address indexed recipient, uint256 amount, string reason, uint256 newBalance)",
+  "event DecayApplied(address indexed user, uint256 burnedAmount, uint256 newBalance)",
+  "event DecayConfigUpdated(uint256 decayPeriod, uint256 decayRate, uint256 decayNotifyDays)",
 ];
 
 // モックモードかどうかを判定（CONTRACT_ADDRESSが未設定の場合）
@@ -155,8 +158,83 @@ async function getTier(address) {
   }
 }
 
+// モックモード用の減価設定（メモリ内に保持）
+const mockDecayConfig = { decayPeriod: 30, decayRate: 10, decayNotifyDays: 3 };
+
+/**
+ * 減価設定を更新する（管理者専用）
+ */
+async function setDecayConfig(decayPeriod, decayRate, decayNotifyDays) {
+  if (isMockMode) {
+    mockDecayConfig.decayPeriod = decayPeriod;
+    mockDecayConfig.decayRate = decayRate;
+    mockDecayConfig.decayNotifyDays = decayNotifyDays;
+    console.log(`[モック] 減価設定更新: 周期${decayPeriod}日 / 率${decayRate}% / 通知${decayNotifyDays}日前`);
+    return { success: true };
+  }
+
+  try {
+    const contract = getWriteContract();
+    const tx = await contract.setDecayConfig(decayPeriod, decayRate, decayNotifyDays);
+    await tx.wait();
+    return { success: true, txHash: tx.hash };
+  } catch (error) {
+    console.error("[contractService] 減価設定エラー:", error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * 現在の減価設定を取得する
+ */
+async function getDecayConfig() {
+  if (isMockMode) {
+    return { ...mockDecayConfig };
+  }
+
+  try {
+    const contract = getReadContract();
+    const [decayPeriod, decayRate, decayNotifyDays] = await Promise.all([
+      contract.decayPeriod(),
+      contract.decayRate(),
+      contract.decayNotifyDays(),
+    ]);
+    return {
+      decayPeriod: Number(decayPeriod),
+      decayRate: Number(decayRate),
+      decayNotifyDays: Number(decayNotifyDays),
+    };
+  } catch (error) {
+    console.error("[contractService] 減価設定取得エラー:", error.message);
+    throw new Error("減価設定の取得に失敗しました");
+  }
+}
+
+/**
+ * ポイントを減価させる（バックエンドのcronジョブから呼ばれる）
+ */
+async function burnDecay(userAddress, amount) {
+  if (isMockMode) {
+    console.log(`[モック] 減価バーン: ${userAddress} から ${amount}pt`);
+    return { success: true };
+  }
+
+  try {
+    const contract = getWriteContract();
+    const tx = await contract.burnDecay(userAddress, amount);
+    await tx.wait();
+    return { success: true, txHash: tx.hash };
+  } catch (error) {
+    console.error("[contractService] 減価バーンエラー:", error.message);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   issuePoints,
   getBalance,
   getTier,
+  setDecayConfig,
+  getDecayConfig,
+  burnDecay,
 };
