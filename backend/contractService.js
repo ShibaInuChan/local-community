@@ -77,11 +77,9 @@ function getWriteContract() {
 async function issuePoints(userAddress, amount, reason) {
   // モックモード: 実際にトランザクションを送らずダミーレスポンスを返す
   if (isMockMode) {
-    console.log(`[モック] ポイント発行: ${userAddress} に ${amount}pt (${reason})`);
-    return {
-      success: true,
-      txHash: "0x" + "mock".repeat(16),
-    };
+    mockBalances[userAddress] = (mockBalances[userAddress] || 0) + amount;
+    console.log(`[モック] ポイント発行: ${userAddress} に ${amount}pt (${reason}) → 残高: ${mockBalances[userAddress]}pt`);
+    return { success: true, txHash: "0x" + "mock".repeat(16) };
   }
 
   try {
@@ -117,10 +115,7 @@ async function getBalance(address) {
   // モックモード: 固定値を返す
   if (isMockMode) {
     console.log(`[モック] 残高確認: ${address}`);
-    // テスト用にアドレスの最後の文字によって異なる残高を返す
-    const mockBalances = { a: 50, b: 150, c: 750, d: 2500 };
-    const lastChar = address.slice(-1).toLowerCase();
-    return mockBalances[lastChar] || 25;
+    return mockBalances[address] || 0;
   }
 
   try {
@@ -157,6 +152,9 @@ async function getTier(address) {
     throw new Error("ランクの確認に失敗しました");
   }
 }
+
+// モックモード用の残高ストア（メモリ内に保持）
+const mockBalances = {};
 
 // モックモード用の減価設定（メモリ内に保持）
 const mockDecayConfig = { decayPeriod: 30, decayRate: 10, decayNotifyDays: 3 };
@@ -215,7 +213,9 @@ async function getDecayConfig() {
  */
 async function burnDecay(userAddress, amount) {
   if (isMockMode) {
-    console.log(`[モック] 減価バーン: ${userAddress} から ${amount}pt`);
+    const current = mockBalances[userAddress] || 0;
+    mockBalances[userAddress] = Math.max(0, current - amount);
+    console.log(`[モック] 減価バーン: ${userAddress} から ${amount}pt → 残高: ${mockBalances[userAddress]}pt`);
     return { success: true };
   }
 
